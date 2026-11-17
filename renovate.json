@@ -1,0 +1,8 @@
+{
+  "enabledManagers": ["npm"],
+  "reviewersFromCodeOwners": true,
+  "assigneesFromCodeOwners": true,
+  "excludeReviewers": ["@renovate-bot"],
+  "excludeAssignees": ["renovate-bot"],
+  "recreateWhen": "always"
+}

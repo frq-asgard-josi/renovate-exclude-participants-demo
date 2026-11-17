@@ -1,0 +1,7 @@
+{
+  "name": "exclude-participants-demo",
+  "private": true,
+  "dependencies": {
+    "is-number": "6.0.0"
+  }
+}

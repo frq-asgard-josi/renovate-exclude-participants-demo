@@ -1,0 +1,97 @@
+name: Renovate
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      renovate-repository:
+        description: Renovate repository to build
+        default: frq-asgard-josi/renovate
+      renovate-ref:
+        description: Branch, tag or SHA of Renovate to build
+        default: feat/exclude-participants
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  BRANCH: renovate/is-number-7.x
+  KEPT_USER: frq-asgard-josi
+  EXCLUDED_USER: renovate-bot
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Renovate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.renovate-repository || 'frq-asgard-josi/renovate' }}
+          ref: ${{ inputs.renovate-ref || 'feat/exclude-participants' }}
+          persist-credentials: false
+          show-progress: false
+
+      - name: Read Node.js version
+        id: node
+        run: echo "version=$(cat .nvmrc)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm
+        uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
+        with:
+          install: false
+          runtime: node@${{ steps.node.outputs.version }}
+
+      - name: Build Renovate
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      # Renovate only adds reviewers and assignees when it creates a PR
+      - name: Close previous demo PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr close "$BRANCH" --repo "$GITHUB_REPOSITORY" --delete-branch || true
+
+      - name: Run Renovate
+        env:
+          RENOVATE_TOKEN: ${{ github.token }}
+          LOG_LEVEL: debug
+          LOG_FILE: renovate.log
+        run: node dist/renovate.js "$GITHUB_REPOSITORY"
+
+      - name: Check participants
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          jq -r '.msg // "" | select(test("^(Reviewers from code owners|Adding reviewers|Adding assignees)"))' renovate.log > participants.log
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number,url,reviewRequests,assignees --jq '.[0] // empty')
+          number=$(jq -r .number <<< "$pr")
+
+          {
+            echo '### Renovate log'
+            echo '```'
+            cat participants.log
+            echo '```'
+            echo '### Pull request'
+            jq -r '"- \(.url)", "- Review requests: \([.reviewRequests[].login] | join(", "))", "- Assignees: \([.assignees[].login] | join(", "))"' <<< "$pr"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          status=0
+          fail() {
+            echo "::error::$1"
+            status=1
+          }
+          [[ -n $number ]] || fail "No open PR on $BRANCH"
+          grep -qE "^Reviewers from code owners: .*\"@$EXCLUDED_USER\"" participants.log ||
+            fail "Code owners don't include @$EXCLUDED_USER"
+          grep -qxF "Adding reviewers '$KEPT_USER' to #$number" participants.log ||
+            fail "Reviewers aren't exactly $KEPT_USER"
+          grep -qxF "Adding assignees '$KEPT_USER' to #$number" participants.log ||
+            fail "Assignees aren't exactly $KEPT_USER"
+          exit "$status"
